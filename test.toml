@@ -1,0 +1,10 @@
+version = 1.0
+paths = [
+    "test\\to\\path1\\",
+    "test\\to\\path2\\",   
+    "test\\to\\path3\\",   
+    "test\\to\\pat4\\",   
+]
+envs = [
+    ["TEST_ENV","100"],
+]
