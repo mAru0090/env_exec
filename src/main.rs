@@ -1,3 +1,7 @@
+
+/// Dynamic setting of environment variables and tools for env_exec
+/// main.rs
+
 use std::env;
 use std::fs::File;
 use std::process::{Command, Stdio};
@@ -7,63 +11,67 @@ use std::path::Path;
 use serde::Deserialize;
 use serde::de::Error;
 use anyhow::Result;
+use regex::Regex;
+
 #[derive(Debug, Deserialize)]
 struct Config {
-    version: f32,
     paths: Vec<String>,
     envs: Vec<Vec<String>>,
 }
 
 fn main() -> Result<()> {
-    // コマンドライン引数の確認
+    // Check command-line arguments
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
         eprintln!("Usage: {} <config_file> <shell> [command...]", args[0]);
         std::process::exit(1);
     }
 
-    // 設定ファイルとシェルの取得
+    // Retrieve the config file and shell
     let config_file = &args[1];
     let shell = &args[2];
     let command_args = &args[3..];
 
-    // 設定ファイルを読み込む
+    // Load the configuration file
     let config: Config = read_toml(config_file)?;
 
-    // 現在の Path 環境変数を取得
+    // Get the current "Path" environment variable
     let current_path = env::var("Path").unwrap_or_default();
     let mut new_path = current_path.clone();
 
-    // TOMLの paths を Path 環境変数に追加
+    // Add the paths from the TOML configuration to the "Path" environment variable
     for path in config.paths {
-        if !path.trim().is_empty() {
+        let expanded_path = expand_env_variables(&path); // Expand environment variables
+        if !expanded_path.trim().is_empty() {
             new_path.push(';');
-            new_path.push_str(&path);
+            new_path.push_str(&expanded_path);
         }
     }
 
-    // 新しい Path を設定
+    // Update the "Path" environment variable
     env::set_var("Path", new_path);
 
-    // 環境変数の設定
-    for env in config.envs {
-        if env.len() == 2 {
-            let (key, value) = (&env[0], &env[1]);
+    // Loop through the environment variables from the configuration
+    for env_pair in config.envs {
+        if env_pair.len() == 2 {
+            let key = &env_pair[0];
+            let value = expand_env_variables(&env_pair[1]); // Expand environment variables
             if !key.is_empty() && !value.is_empty() {
                 env::set_var(key, value);
             }
         }
     }
 
-    // コマンドを構築して実行
+    // Initialize the command
     let mut command = Command::new(shell);
     command.args(command_args);
-    // 標準入出力の設定（オプション）
+
+    // Set stdin, stdout, and stderr
     command.stdin(Stdio::inherit())
            .stdout(Stdio::inherit())
            .stderr(Stdio::inherit());
 
-    // コマンド実行
+    // Execute the command
     let status = command.status()?;
     if !status.success() {
         eprintln!("Command failed with status: {:?}", status);
@@ -72,7 +80,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// TOMLファイルを読み込む関数
+// Read the TOML configuration file
 fn read_toml<P>(filename: P) -> Result<Config, toml::de::Error>
 where
     P: AsRef<Path>,
@@ -81,4 +89,13 @@ where
     let mut contents = String::new();
     io::Read::read_to_string(&mut file, &mut contents).unwrap();
     toml::de::from_str(&contents)
+}
+
+// Expand environment variables in the input string
+fn expand_env_variables(input: &str) -> String {
+    let re = Regex::new(r"\$\(([^)]+)\)").unwrap(); // Match $(VAR) pattern
+    re.replace_all(input, |caps: &regex::Captures| {
+        env::var(&caps[1]).unwrap_or_else(|_| "".to_string()) // Retrieve the environment variable or use an empty string
+    })
+    .to_string()
 }
